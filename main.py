@@ -1,4 +1,5 @@
 import sys
+from word2number import w2n
 
 filepath = "test.db"
 file = open(filepath, "r")
@@ -41,7 +42,18 @@ def is_function(on: str):
             if ind > 7:
                 return False
     
-    return True     
+    return True    
+
+# Thanks chatgpt
+def is_word_number(input_string: str):
+    input_string.replace(" ", "-")
+    try:
+        # Try converting the input string to a number
+        number = w2n.word_to_num(input_string)
+        return True
+    except ValueError:
+        # If conversion fails, it's not a valid number in words
+        return False 
 
 def parse_var(var: str):
     var = var.strip(" ")
@@ -80,49 +92,60 @@ def parse_var(var: str):
             return r == str(l)
         elif (type(l) == float or type(l) == int or l.lstrip("-").split(".")[0].isnumeric()) and (type(r) == float or type(r) == int or r.lstrip("-").split(".")[0].isnumeric()):
             return round(float(l)) == round(float(r))
+    
+    operators = []
+    ind = 0
+    lowest_sig = 99999
+    highest_sig = -99999
+    for char in var:
+        if char == "+" or char == "-" or char == "*" or char == "/" or char == "^":
+            sig = -(len(var[:ind]) - len(var[:ind].rstrip(" ")))
+            operators.append({
+                "ind": ind,
+                "operator": char,
+                "significance": sig,
+                "op_significance": 0,
+                "index": ind
+            })
+            if sig < lowest_sig:
+                lowest_sig = sig
+            if sig > highest_sig:
+                highest_sig = sig
 
-    if var.find("+") != -1:
-        var = var.split("+")
-        out = parse_var(var[0])
-        first = False
-        for item in var:
-            if first:
-                out += parse_var(item)
-            else:
-                first = True
-        return out
+        if char == "*" or char == "/":
+            operators[-1]["op_significance"] = 1
+        
+        if char == "^":
+            operators[-1]["op_significance"] = 2
+        
+        ind += 1
     
-    if var.find("-") != -1:
-        var = var.split("-")
-        out = parse_var(var[0])
-        first = False
-        for item in var:
-            if first:
-                out -= parse_var(item)
-            else:
-                first = True
-        return out
+    # Totally readable code
+    if operators:
+        sorted_sig = [[] for _ in range(highest_sig - lowest_sig + 1)]
+        for operator in operators:
+            sorted_sig[operator["significance"] - lowest_sig].append(operator)
+        sorted_op_sig = [[[], [], []] for _ in range(highest_sig - lowest_sig + 1)]
+        for i in range(len(sorted_sig)):
+            for operator in sorted_sig[i]:
+                sorted_op_sig[i][operator["op_significance"]].append(operator)
     
-    if var.find("*") != -1:
-        var = var.split("*")
-        out = parse_var(var[0])
-        first = False
-        for item in var:
-            if first:
-                out *= parse_var(item)
-            else:
-                first = True
-        return out
-    
-    if var.find("/") != -1:
-        var = var.split("/")
-        if parse_var(var[1]) == 0:
-            return "undefined"
-        return parse_var(var[0]) / parse_var(var[1])
+        to_split = sorted_op_sig[0][0][0] if len(sorted_op_sig[0][0]) > 0 else (sorted_op_sig[0][1][0] if len(sorted_op_sig[0][1]) > 0 else sorted_op_sig[0][2][0])
 
-    if var.find("^") != -1:
-        var = var.split("^")
-        return parse_var(var[0]) ** parse_var(var[1])
+        if to_split["operator"] == "+":
+            return parse_var(var[:to_split["ind"]]) + parse_var(var[to_split["ind"] + 1:])
+        
+        if to_split["operator"] == "-":
+            return parse_var(var[:to_split["ind"]]) - parse_var(var[to_split["ind"] + 1:])
+        
+        if to_split["operator"] == "*":
+            return parse_var(var[:to_split["ind"]]) * parse_var(var[to_split["ind"] + 1:])
+        
+        if to_split["operator"] == "/":
+            return parse_var(var[:to_split["ind"]]) / parse_var(var[to_split["ind"] + 1:])
+
+        if var.find("^") != -1:
+            return parse_var(var[:to_split["ind"]]) ** parse_var(var[to_split["ind"] + 1:])
 
     if var.startswith('"') or var.startswith("'"):
         while var.startswith('"') or var.startswith("'"):
@@ -135,13 +158,16 @@ def parse_var(var: str):
 
             currency = var.split("{")[0][-1]
             if not currency in currency_list:
-                print(f"ERROR: Line {line_num}, I don't know about that currency.")
+                print(f"ERROR: Line (I don't know the line), I don't know about that currency.")
                 quit()
         
         return var
 
     if var.lstrip("-").split(".")[0].isnumeric():
         return float(var)
+    
+    if is_word_number(var):
+        return w2n.word_to_num(var)
     
     if var.startswith("["):
         var = var.removeprefix("[")
@@ -193,8 +219,11 @@ num_open_curl_bracket = 0
 stepping_through_function = False
 function_stepping_through = {}
 called_one_liner = False
+base_spaces = 0
+negative_spaces = False
 
 while line_num < len(text):
+    indent_num = 0
     line = text[line_num]
     line_num += 1
 
@@ -222,6 +251,15 @@ while line_num < len(text):
 
     debug = line.endswith("?")
 
+    indent_num = 0
+
+    if line.startswith(" "):
+        indent_num = len(line) - len(line.lstrip(" "))
+
+        if line_num == 1:
+            base_spaces += 1
+            negative_spaces = True
+
     # Remove annoying !s and ?s
     while line.endswith("?") or line.endswith("!") or line.startswith(" ") or line.endswith(" "):
         line = line.removesuffix("?")
@@ -235,6 +273,10 @@ while line_num < len(text):
         line_num = stack[-1]["from"]
         stack.pop()
         continue
+
+    if ((base_spaces - indent_num) if negative_spaces else (indent_num)) != len(stack) * 3:
+        print(f"ERROR: Line {line_num}, incorrect indentation." + (f" Should be (-){len(stack) * 3} spaces but is {(base_spaces - indent_num) if negative_spaces else (indent_num)}." if debug else ""))
+        break
 
     if line.startswith("print"):
         args = parse_function_call(line)["args"]
