@@ -1,1 +1,8 @@
-print(one + two)!
+const var health = 10!
+when (health = 0) {
+   print("You lose")!
+}
+
+health = 0
+health = 1
+health = 2
